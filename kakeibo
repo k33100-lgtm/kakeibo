@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>支出管理</title>
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js "></script>
+    <style>
+        :root { --main-blue: #007aff; --bg-gray: #f2f2f7; --red: #ff3b30; --green: #34c759; }
+        body { font-family: -apple-system, sans-serif; margin: 0; background: var(--bg-gray); padding-bottom: 50px; }
+        #calendar { background: white; padding: 10px; border-bottom: 1px solid #d1d1d6; }
+        .container { padding: 15px; }
+        .card { background: white; padding: 15px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        h3 { margin-top: 0; font-size: 17px; }
+        .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; }
+        .summary-item div:first-child { font-size: 11px; color: #888; }
+        .summary-item div:last-child { font-size: 14px; font-weight: bold; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #d1d1d6; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+        button { width: 100%; padding: 14px; background: var(--main-blue); color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 16px; cursor: pointer; margin-bottom: 10px; }
+        
+        /* 共通メニュー・ポップアップ */
+        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 9999; }
+        .menu-content { position: absolute; bottom: 30px; left: 5%; width: 90%; background: white; border-radius: 14px; overflow: hidden; padding: 10px; box-sizing: border-box; }
+        .menu-btn { width: 100%; padding: 16px; border: none; background: white; font-size: 18px; border-bottom: 1px solid #eee; color: var(--main-blue); font-weight: 500; }
+        .menu-btn.delete { color: var(--red); }
+        .menu-btn.cancel { font-weight: bold; color: #333; border-bottom: none; }
+        
+        /* 修正用ポップアップ内の調整 */
+        .edit-ui { padding: 10px; }
+        .edit-ui h4 { margin: 0 0 10px; font-size: 15px; }
+    </style>
+</head>
+<body>
+
+<div id="calendar"></div>
+
+<div class="container">
+    <div class="card">
+        <h3 id="month-label">収支</h3>
+        <div class="summary-grid">
+            <div class="summary-item"><div>収入</div><div id="total-income">¥0</div></div>
+            <div class="summary-item"><div>支出</div><div id="total-expense">¥0</div></div>
+            <div class="summary-item"><div>残高</div><div id="total-balance">¥0</div></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 id="selected-date">日付を選んでください</h3>
+        <input type="number" id="income" placeholder="追加する収入 (¥)">
+        <input type="number" id="expense" placeholder="追加する支出 (¥)">
+        <button onclick="saveData()">＋ 加算して保存</button>
+    </div>
+
+    <div class="card">
+        <h3>固定費設定</h3>
+        <input type="number" id="fixed-day" placeholder="日 (例: 25)">
+        <input type="text" id="fixed-name" placeholder="項目名 (例: 家賃)">
+        <input type="number" id="fixed-amount" placeholder="金額 (¥)">
+        <button style="background: var(--green);" onclick="addFixedCost()">固定費を追加</button>
+    </div>
+
+    <div class="card" style="background: #f9f9f9;">
+        <h3 style="color: #666; font-size: 14px;">データ管理</h3>
+        <button style="background: #8e8e93; font-size: 13px; padding: 10px;" onclick="copyBackup()">データをコピー</button>
+        <textarea id="backup-text" style="width:100%;height:40px;font-size:10px;" placeholder="復元時はここに貼り付け"></textarea>
+        <button style="background: #8e8e93; font-size: 13px; padding: 10px;" onclick="restoreBackup()">復元</button>
+    </div>
+</div>
+
+<div id="custom-menu" class="overlay" onclick="closeMenu()">
+    <div class="menu-content" onclick="event.stopPropagation()">
+        <button class="menu-btn" onclick="openEditPopup()">修正する</button>
+        <button class="menu-btn delete" onclick="menuAction('delete')">削除する</button>
+        <button class="menu-btn cancel" onclick="closeMenu()">閉じる</button>
+    </div>
+</div>
+
+<div id="edit-popup" class="overlay" onclick="closeEditPopup()">
+    <div class="menu-content" onclick="event.stopPropagation()">
+        <div class="edit-ui">
+            <h4 id="edit-title">金額を修正</h4>
+            <input type="number" id="edit-value" pattern="\d*">
+            <button onclick="executeEdit()">金額を書き換えて保存</button>
+            <button class="menu-btn cancel" onclick="closeEditPopup()">戻る</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let selectedDateStr = "";
+    let savedData = JSON.parse(localStorage.getItem('moneyData')) || {};
+    let fixedCosts = JSON.parse(localStorage.getItem('fixedCosts')) || [];
+    let currentEditingEvent = null;
+
+    const calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
+        initialView: 'dayGridMonth',
+        locale: 'ja',
+        headerToolbar: { left: 'prev', center: 'title', right: 'next' },
+        height: 'auto',
+        dateClick: function(info) {
+            selectedDateStr = info.dateStr;
+            document.getElementById('selected-date').innerText = selectedDateStr + " の記録";
+            document.getElementById('income').value = "";
+            document.getElementById('expense').value = "";
+        },
+        eventClick: function(info) {
+            currentEditingEvent = info.event;
+            document.getElementById('custom-menu').style.display = 'block';
+        },
+        datesSet: function() { updateMonthlySummary(); },
+        events: function(info, successCallback) {
+            successCallback(generateAllEvents(info.start, info.end));
+        }
+    });
+    calendar.render();
+
+    function closeMenu() { document.getElementById('custom-menu').style.display = 'none'; }
+
+    // 修正用ポップアップを開く
+    function openEditPopup() {
+        closeMenu();
+        const props = currentEditingEvent.extendedProps;
+        let currentVal = 0;
+        
+        if (props.type === 'fixed') {
+            const fc = fixedCosts.find(c => String(c.id) === String(props.fId));
+            currentVal = fc.amount;
+            document.getElementById('edit-title').innerText = `[固定費] ${fc.name} の修正`;
+        } else {
+            const date = currentEditingEvent.startStr;
+            currentVal = props.type === 'income' ? savedData[date].income : savedData[date].expense;
+            document.getElementById('edit-title').innerText = `${date} (${props.type === 'income'?'収入':'支出'}) の修正`;
+        }
+        
+        document.getElementById('edit-value').value = currentVal;
+        document.getElementById('edit-popup').style.display = 'block';
+    }
+
+    function closeEditPopup() { document.getElementById('edit-popup').style.display = 'none'; }
+
+    // ポップアップで「保存」した時の処理
+    function executeEdit() {
+        const newVal = parseInt(document.getElementById('edit-value').value) || 0;
+        const props = currentEditingEvent.extendedProps;
+        const date = currentEditingEvent.startStr;
+
+        if (props.type === 'fixed') {
+            const index = fixedCosts.findIndex(c => String(c.id) === String(props.fId));
+            if (index > -1) fixedCosts[index].amount = newVal;
+            localStorage.setItem('fixedCosts', JSON.stringify(fixedCosts));
+        } else {
+            if (props.type === 'income') savedData[date].income = newVal;
+            if (props.type === 'expense') savedData[date].expense = newVal;
+            localStorage.setItem('moneyData', JSON.stringify(savedData));
+        }
+        
+        calendar.refetchEvents();
+        updateMonthlySummary();
+        closeEditPopup();
+        alert("修正しました");
+    }
+
+    function menuAction(type) {
+        if (type === 'delete') {
+            if (confirm("本当に消しますか？")) {
+                const props = currentEditingEvent.extendedProps;
+                const date = currentEditingEvent.startStr;
+                if (props.type === 'fixed') {
+                    fixedCosts = fixedCosts.filter(c => String(c.id) !== String(props.fId));
+                    localStorage.setItem('fixedCosts', JSON.stringify(fixedCosts));
+                } else {
+                    if (props.type === 'income') savedData[date].income = 0;
+                    if (props.type === 'expense') savedData[date].expense = 0;
+                    localStorage.setItem('moneyData', JSON.stringify(savedData));
+                }
+            }
+        }
+        calendar.refetchEvents();
+        updateMonthlySummary();
+        closeMenu();
+    }
+
+    function saveData() {
+        if (!selectedDateStr) return alert("日付を選んでね");
+        const inVal = parseInt(document.getElementById('income').value) || 0;
+        const exVal = parseInt(document.getElementById('expense').value) || 0;
+        if (!savedData[selectedDateStr]) savedData[selectedDateStr] = { income: 0, expense: 0 };
+        savedData[selectedDateStr].income += inVal;
+        savedData[selectedDateStr].expense += exVal;
+        localStorage.setItem('moneyData', JSON.stringify(savedData));
+        calendar.refetchEvents();
+        updateMonthlySummary();
+        alert("加算しました");
+    }
+
+    function addFixedCost() {
+        const day = document.getElementById('fixed-day').value;
+        const name = document.getElementById('fixed-name').value;
+        const amount = document.getElementById('fixed-amount').value;
+        if (!day || !name || !amount) return alert("全部入力してね");
+        fixedCosts.push({ id: String(Date.now()), day: parseInt(day), name: name, amount: parseInt(amount) });
+        localStorage.setItem('fixedCosts', JSON.stringify(fixedCosts));
+        calendar.refetchEvents();
+        updateMonthlySummary();
+    }
+
+    function updateMonthlySummary() {
+        const viewDate = calendar.getDate();
+        const year = viewDate.getFullYear();
+        const month = viewDate.getMonth();
+        let inSum = 0, exSum = 0;
+        Object.keys(savedData).forEach(date => {
+            const parts = date.split('-');
+            if (parseInt(parts[0]) === year && parseInt(parts[1]) === (month + 1)) {
+                inSum += savedData[date].income || 0;
+                exSum += savedData[date].expense || 0;
+            }
+        });
+        fixedCosts.forEach(fc => exSum += fc.amount || 0);
+        document.getElementById('month-label').innerText = `${year}年${month + 1}月の収支`;
+        document.getElementById('total-income').innerText = `¥${inSum.toLocaleString()}`;
+        document.getElementById('total-expense').innerText = `¥${exSum.toLocaleString()}`;
+        document.getElementById('total-balance').innerText = `¥${(inSum - exSum).toLocaleString()}`;
+    }
+
+    function generateAllEvents(start, end) {
+        let events = [];
+        Object.keys(savedData).forEach(date => {
+            if (savedData[date].expense > 0) events.push({ title: `出:¥${savedData[date].expense}`, start: date, color: 'var(--red)', extendedProps: {type: 'expense'} });
+            if (savedData[date].income > 0) events.push({ title: `入:¥${savedData[date].income}`, start: date, color: 'var(--main-blue)', extendedProps: {type: 'income'} });
+        });
+        let curr = new Date(start);
+        while (curr < end) {
+            fixedCosts.forEach(fc => {
+                if (curr.getDate() === fc.day) {
+                    const dateStr = curr.getFullYear() + '-' + ('0' + (curr.getMonth() + 1)).slice(-2) + '-' + ('0' + curr.getDate()).slice(-2);
+                    events.push({ title: `[固]${fc.name} ¥${fc.amount}`, start: dateStr, color: '#ff9500', extendedProps: {type: 'fixed', fId: fc.id} });
+                }
+            });
+            curr.setDate(curr.getDate() + 1);
+        }
+        return events;
+    }
+
+    function copyBackup() {
+        const text = JSON.stringify({ moneyData: savedData, fixedCosts: fixedCosts });
+        document.getElementById('backup-text').value = text;
+        navigator.clipboard.writeText(text);
+        alert("コピー完了！");
+    }
+
+    function restoreBackup() {
+        const text = document.getElementById('backup-text').value;
+        try {
+            const parsed = JSON.parse(text);
+            localStorage.setItem('moneyData', JSON.stringify(parsed.moneyData));
+            localStorage.setItem('fixedCosts', JSON.stringify(parsed.fixedCosts));
+            location.reload();
+        } catch(e) { alert("失敗しました"); }
+    }
+</script>
+</body>
+</html>
