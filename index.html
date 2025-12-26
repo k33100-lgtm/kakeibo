@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>支出管理</title>
+
+  <!-- ★ iPhoneで動く修正版 -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+
+  <style>
+    :root { --main-blue:#007aff; --bg-gray:#f2f2f7; --red:#ff3b30; --green:#34c759; }
+    body { font-family:-apple-system,sans-serif; margin:0; background:var(--bg-gray); padding-bottom:50px; }
+    #calendar { background:#fff; padding:10px; border-bottom:1px solid #d1d1d6; }
+    .container { padding:15px; }
+    .card { background:#fff; padding:15px; border-radius:12px; margin-bottom:15px; }
+    input,button { width:100%; padding:12px; margin-top:8px; font-size:16px; }
+    button { background:var(--main-blue); color:#fff; border:none; border-radius:8px; }
+  </style>
+</head>
+
+<body>
+<div id="calendar"></div>
+
+<div class="container">
+  <div class="card">
+    <h3 id="selected-date">日付を選んでください</h3>
+    <input type="number" id="income" placeholder="収入">
+    <input type="number" id="expense" placeholder="支出">
+    <button onclick="saveData()">保存</button>
+  </div>
+</div>
+
+<script>
+let selectedDate="";
+let data=JSON.parse(localStorage.getItem("moneyData")||"{}");
+
+const calendar=new FullCalendar.Calendar(document.getElementById("calendar"),{
+  initialView:"dayGridMonth",
+  locale:"ja",
+  dateClick(info){
+    selectedDate=info.dateStr;
+    document.getElementById("selected-date").innerText=selectedDate;
+  },
+  events(){
+    return Object.keys(data).flatMap(d=>{
+      let e=[];
+      if(data[d].income) e.push({title:"入 ¥"+data[d].income,start:d});
+      if(data[d].expense) e.push({title:"出 ¥"+data[d].expense,start:d,color:"red"});
+      return e;
+    });
+  }
+});
+calendar.render();
+
+function saveData(){
+  if(!selectedDate) return alert("日付選んで");
+  if(!data[selectedDate]) data[selectedDate]={income:0,expense:0};
+  data[selectedDate].income+=Number(income.value||0);
+  data[selectedDate].expense+=Number(expense.value||0);
+  localStorage.setItem("moneyData",JSON.stringify(data));
+  calendar.refetchEvents();
+}
+</script>
+</body>
+</html>
